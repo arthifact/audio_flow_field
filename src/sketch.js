@@ -3,17 +3,12 @@ import { AudioResponse } from './analysis.js';
 import { createField, updateField, Particle } from './flow.js';
 import { buildUI } from './ui.js';
 
-const BASE_PARTICLES = 1400;
-const MAX_PARTICLES = 3500;
 const SILENCE = { energy: 0, bass: 0, mid: 0, treble: 0, level: 0 };
 
 let fft, amplitude, player, ui, field;
-let particles = [];
-let response = new AudioResponse();
-let zOffset = 10;
-let burst = 0,
-  cooldown = 0,
-  previousBass = 0;
+let particles, response;
+let zOffset, heading;
+let burst, cooldown, previousBass;
 let userColor, targetColor;
 
 function setup() {
@@ -25,7 +20,6 @@ function setup() {
   fft = new p5.FFT();
   amplitude = new p5.Amplitude();
   userColor = color('#ff2828');
-  targetColor = userColor;
   field = createField(width, height);
   resetScene();
   player = new AudioPlayer({
@@ -52,9 +46,10 @@ function addParticle() {
 
 function resetScene() {
   particles = [];
-  for (let i = 0; i < BASE_PARTICLES; i++) addParticle();
+  for (let i = 0; i < field.baseCount; i++) addParticle();
   response = new AudioResponse();
   zOffset = 10;
+  heading = 0;
   burst = cooldown = previousBass = 0;
   targetColor = userColor;
   background(0);
@@ -83,15 +78,17 @@ function draw() {
   burst *= 0.88 ** step;
   previousBass = levels.bass;
 
-  updateField(field, zOffset, levels, noise);
+  // Slow, continuous steering keeps the familiar flow from favoring a diagonal.
+  heading += dt * (0.12 + (levels.energy / 255) * 0.1);
+  updateField(field, zOffset, levels, noise, heading);
   zOffset += (0.0001 + (levels.bass / 255) * 0.0099) * step;
   const count = Math.floor(
-    BASE_PARTICLES + levels.level * (MAX_PARTICLES - BASE_PARTICLES),
+    field.baseCount + levels.level * (field.maxCount - field.baseCount),
   );
   while (particles.length < count) addParticle();
   particles.length = count;
 
-  const maxSpeed = 0.1 + (levels.energy / 255) * 7.9;
+  const maxSpeed = (0.1 + (levels.energy / 255) * 7.9) * field.scale;
   const energyColor = lerpColor(
     color(
       red(userColor) * 0.24,
@@ -105,10 +102,13 @@ function draw() {
   for (const particle of particles) {
     const previousSpeed = particle.speed;
     particle.move(field, width, height, maxSpeed, burst, step);
-    if (Math.abs(particle.speed - previousSpeed) > 0.5)
+    if (Math.abs(particle.speed - previousSpeed) > 0.5 * field.scale)
       targetColor = energyColor;
     particle.col = lerpColor(particle.col, targetColor, transition);
-    strokeWeight(2 + ((particle.speed * levels.level) / 5) * 2);
+    strokeWeight(
+      (2 + (((particle.speed / field.scale) * levels.level) / 5) * 2) *
+        field.scale,
+    );
     stroke(particle.col);
     line(particle.prevX, particle.prevY, particle.x, particle.y);
   }
@@ -138,11 +138,12 @@ function keyPressed(event) {
 
 function windowResized() {
   const oldWidth = width,
-    oldHeight = height;
+    oldHeight = height,
+    oldScale = field.scale;
   resizeCanvas(windowWidth, windowHeight);
   field = createField(width, height);
   for (const particle of particles)
-    particle.resize(oldWidth, oldHeight, width, height);
+    particle.resize(oldWidth, oldHeight, width, height, field.scale / oldScale);
 }
 
 // p5 global mode discovers its callbacks on window.
