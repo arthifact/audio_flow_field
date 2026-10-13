@@ -1,0 +1,52 @@
+export function buildUI({ player, clear, toggleFullscreen }) {
+  const fileInput = document.querySelector('#audio-file');
+  const loadButton = document.querySelector('#load-audio');
+  const playButton = document.querySelector('#play-audio');
+  const clearButton = document.querySelector('#clear-field');
+  const fullscreenButton = document.querySelector('#fullscreen');
+  const filename = document.querySelector('#filename');
+
+  loadButton.addEventListener('click', () => fileInput.click());
+  fileInput.addEventListener('change', () => {
+    player.loadFile(fileInput.files[0]);
+    fileInput.value = '';
+  });
+  playButton.addEventListener('click', () => player.togglePlay());
+  clearButton.addEventListener('click', clear);
+  fullscreenButton.addEventListener('click', toggleFullscreen);
+  document.addEventListener('fullscreenchange', () => {
+    fullscreenButton.textContent = document.fullscreenElement
+      ? 'Exit fullscreen'
+      : 'Fullscreen';
+  });
+
+  let dragDepth = 0;
+  window.addEventListener('dragenter', (event) => {
+    event.preventDefault();
+    if (!event.dataTransfer.types.includes('Files')) return;
+    dragDepth++;
+    document.body.classList.add('dropping');
+  });
+  window.addEventListener('dragover', (event) => event.preventDefault());
+  window.addEventListener('dragleave', () => {
+    dragDepth = Math.max(0, dragDepth - 1);
+    if (dragDepth === 0) document.body.classList.remove('dropping');
+  });
+  window.addEventListener('drop', (event) => {
+    event.preventDefault();
+    dragDepth = 0;
+    document.body.classList.remove('dropping');
+    player.loadFile(event.dataTransfer.files[0]);
+  });
+
+  return {
+    update() {
+      playButton.disabled = !player.isLoaded;
+      playButton.textContent = player.isPlaying ? 'Pause' : 'Play';
+      filename.textContent =
+        player.error || player.filename || 'No audio selected';
+      filename.classList.toggle('has-error', Boolean(player.error));
+      filename.title = filename.textContent;
+    },
+  };
+}
