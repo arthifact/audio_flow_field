@@ -14,14 +14,24 @@ test('rendered particle density and thickness scale with the window', async ({
     const prototype = CanvasRenderingContext2D.prototype;
     const moveTo = prototype.moveTo,
       lineTo = prototype.lineTo;
+    window.__flowOutside = 0;
     window.draw = () => {
+      const previous = window.__flowFrame;
       const frame = {
         width: window.width,
         height: window.height,
         count: 0,
         totalWidth: 0,
         longest: 0,
+        maxX: 0,
+        maxY: 0,
+        rightHalf: 0,
+        bottomHalf: 0,
         outside: 0,
+        framesAtSize:
+          previous?.width === window.width && previous?.height === window.height
+            ? previous.framesAtSize + 1
+            : 1,
       };
       window.__flowFrame = frame;
       draw();
@@ -36,6 +46,10 @@ test('rendered particle density and thickness scale with the window', async ({
       if (frame && start) {
         frame.count++;
         frame.totalWidth += this.lineWidth;
+        frame.maxX = Math.max(frame.maxX, x, start.x);
+        frame.maxY = Math.max(frame.maxY, y, start.y);
+        if (x > frame.width / 2) frame.rightHalf++;
+        if (y > frame.height / 2) frame.bottomHalf++;
         frame.longest = Math.max(
           frame.longest,
           Math.hypot(x - start.x, y - start.y),
@@ -48,8 +62,10 @@ test('rendered particle density and thickness scale with the window', async ({
             point.y < -0.01 ||
             point.x > frame.width + 0.01 ||
             point.y > frame.height + 0.01
-          )
+          ) {
             frame.outside++;
+            window.__flowOutside++;
+          }
       }
       return lineTo.call(this, x, y);
     };
@@ -76,10 +92,19 @@ test('rendered particle density and thickness scale with the window', async ({
         })),
       )
       .toEqual(viewport);
+    // Observe both the first resize redraw and subsequent animation frames.
+    await expect
+      .poll(() => page.evaluate(() => window.__flowFrame.framesAtSize))
+      .toBeGreaterThanOrEqual(3);
     const frame = await page.evaluate(() => window.__flowFrame);
     expect(frame.count).toBeGreaterThan(0);
     expect(frame.count).toBeLessThanOrEqual(5000);
     expect(frame.outside).toBe(0);
+    expect(await page.evaluate(() => window.__flowOutside)).toBe(0);
+    expect(frame.maxX).toBeGreaterThan(viewport.width * 0.8);
+    expect(frame.maxY).toBeGreaterThan(viewport.height * 0.8);
+    expect(frame.rightHalf).toBeGreaterThan(frame.count * 0.2);
+    expect(frame.bottomHalf).toBeGreaterThan(frame.count * 0.2);
     expect(frame.longest).toBeLessThanOrEqual(38.41);
     frames.push({ ...frame, thickness: frame.totalWidth / frame.count });
   }
