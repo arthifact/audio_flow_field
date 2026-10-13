@@ -1,26 +1,47 @@
-export const CELL_SIZE = 20;
+const mix = (a, b, t) => a + (b - a) * t;
 
 export function createField(width, height) {
-  const cols = Math.max(1, Math.ceil(width / CELL_SIZE));
-  const rows = Math.max(1, Math.ceil(height / CELL_SIZE));
+  const area = (width * height) / (1280 * 800);
+  const scale = Math.min(1.6, Math.max(0.5, area ** 0.25));
+  const cellSize = 20 * scale;
+  // Include a border sample so interpolation also covers partial edge cells.
+  const cols = Math.ceil(width / cellSize) + 1;
+  const rows = Math.ceil(height / cellSize) + 1;
+  const density = Math.min(2, Math.sqrt(area));
+  const baseCount = Math.max(80, Math.round(1400 * density));
   return {
     cols,
     rows,
+    cellSize,
+    scale,
+    baseCount,
+    maxCount: Math.max(baseCount, Math.min(5000, Math.round(3500 * density))),
     x: new Float64Array(cols * rows),
     y: new Float64Array(cols * rows),
   };
 }
 
-export function updateField(field, z, { energy, bass, mid, treble }, noise) {
-  const magnitude = 0.5 + (energy / 255) * 4.5;
+export function updateField(
+  field,
+  z,
+  { energy, bass, mid, treble },
+  noise,
+  heading = 0,
+) {
+  const magnitude = (0.5 + (energy / 255) * 4.5) * field.scale;
   const horizontal = (mid / 255) * magnitude;
   const vertical = ((treble - bass) / 255) * magnitude;
+  const c = Math.cos(heading),
+    s = Math.sin(heading);
   for (let y = 0; y < field.rows; y++) {
     for (let x = 0; x < field.cols; x++) {
       const i = x + y * field.cols;
       const angle = noise(x * 0.01, y * 0.01, z) * Math.PI * 2;
-      field.x[i] = Math.cos(angle) * magnitude + horizontal;
-      field.y[i] = Math.sin(angle) * magnitude + vertical;
+      const fx = Math.cos(angle) * magnitude + horizontal;
+      const fy = Math.sin(angle) * magnitude + vertical;
+      // Turn the audio forces with the field, avoiding a fixed screen-axis bias.
+      field.x[i] = fx * c - fy * s;
+      field.y[i] = fx * s + fy * c;
     }
   }
 }
@@ -41,18 +62,36 @@ export class Particle {
   move(field, width, height, maxSpeed, burst, step) {
     this.prevX = this.x;
     this.prevY = this.y;
-    const index =
-      Math.floor(this.x / CELL_SIZE) +
-      Math.floor(this.y / CELL_SIZE) * field.cols;
-    let fx = field.x[index],
-      fy = field.y[index];
-    const dx = this.x - width / 2,
-      dy = this.y - height / 2;
-    const distance = Math.hypot(dx, dy);
-    if (burst > 0.01 && distance > 1 && distance < 600) {
-      const force = (burst * (1 - distance / 600)) / distance;
-      fx += dx * force;
-      fy += dy * force;
+    const gx = this.x / field.cellSize,
+      gy = this.y / field.cellSize;
+    const x = Math.floor(gx),
+      y = Math.floor(gy);
+    const tx = gx - x,
+      ty = gy - y;
+    const i = x + y * field.cols,
+      below = i + field.cols;
+    // Blend neighboring directions so crossing a cell never snaps the force.
+    let fx = mix(
+      mix(field.x[i], field.x[i + 1], tx),
+      mix(field.x[below], field.x[below + 1], tx),
+      ty,
+    );
+    let fy = mix(
+      mix(field.y[i], field.y[i + 1], tx),
+      mix(field.y[below], field.y[below + 1], tx),
+      ty,
+    );
+    if (burst > 0.01) {
+      const dx = this.x - width / 2,
+        dy = this.y - height / 2;
+      const distance = Math.hypot(dx, dy);
+      const radius = 600 * field.scale;
+      if (distance > 1 && distance < radius) {
+        const force =
+          (burst * field.scale * (1 - distance / radius)) / distance;
+        fx += dx * force;
+        fy += dy * force;
+      }
     }
     this.vx += fx * step;
     this.vy += fy * step;
@@ -73,10 +112,13 @@ export class Particle {
     }
   }
 
-  resize(oldWidth, oldHeight, width, height) {
+  resize(oldWidth, oldHeight, width, height, scaleRatio) {
     this.x = wrap((this.x * width) / oldWidth, width);
     this.y = wrap((this.y * height) / oldHeight, height);
     this.prevX = this.x;
     this.prevY = this.y;
+    this.vx *= scaleRatio;
+    this.vy *= scaleRatio;
+    this.speed *= scaleRatio;
   }
 }
