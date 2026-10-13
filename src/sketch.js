@@ -140,7 +140,8 @@ function windowResized() {
   const oldWidth = width,
     oldHeight = height,
     oldScale = field.scale;
-  resizeCanvas(windowWidth, windowHeight);
+  // Resize geometry before the next draw; p5 otherwise redraws immediately.
+  resizeCanvas(windowWidth, windowHeight, true);
   field = createField(width, height);
   for (const particle of particles)
     particle.resize(oldWidth, oldHeight, width, height, field.scale / oldScale);
